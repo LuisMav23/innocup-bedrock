@@ -4,13 +4,13 @@ import json
 from dotenv import load_dotenv
 import os
 from datetime import datetime
-import uuid
+import random
 
 # Load environment variables from .env file
 load_dotenv()
 
 app = Flask(__name__)
-# app.secret_key = os.getenv('SECRET_KEY') 
+app.secret_key = os.getenv('SECRET_KEY')
 
 # Initialize the Bedrock client with environment variables
 bedrock_client = boto3.client(
@@ -23,9 +23,9 @@ bedrock_client = boto3.client(
 # Initialize the DynamoDB client
 dynamodb = boto3.resource(
     'dynamodb',
-    region_name='ap-southeast-2',
+    region_name='us-east-1',
     aws_access_key_id=os.getenv('DYNAMODB_ACCESS_KEY_ID'),
-    aws_secret_access_key=os.getenv('DYNAMODB_SECRET_ACCESS_KEY_SECRET')
+    aws_secret_access_key=os.getenv('DYNAMODB_SECRET_ACCESS_KEY')
 )
 
 # Get the Dynamo table
@@ -33,7 +33,6 @@ table = dynamodb.Table(os.getenv('DYNAMODB_TABLE_NAME'))
 
 def invoke_model(model_id, prompt):
     try:
-        # Construct the request payload
         request_payload = {
             "inputText": prompt,
             "textGenerationConfig": {
@@ -44,7 +43,6 @@ def invoke_model(model_id, prompt):
             }
         }
         
-        # Send the request to the model
         response = bedrock_client.invoke_model(
             modelId=model_id,
             body=json.dumps(request_payload),
@@ -52,11 +50,9 @@ def invoke_model(model_id, prompt):
             accept='application/json'
         )
         
-        # Decode and extract the result
         response_body = response['body'].read().decode('utf-8')
         result = json.loads(response_body)
         
-        # Extract output text from the results list
         if 'results' in result and len(result['results']) > 0:
             output_text = result['results'][0].get('outputText', 'No output text found')
         else:
@@ -73,7 +69,7 @@ def store_conversation_in_dynamodb(conversation_id, conversation_history):
     conversation_json = json.dumps(conversation_history)
     table.put_item(
         Item={
-            'conversation_id': conversation_id,
+            'conversation_id': conversation_id,  # Ensure conversation_id is a number
             'timestamp': timestamp,
             'conversation': conversation_json
         }
@@ -87,26 +83,17 @@ def generate_text():
     if not prompt:
         return jsonify({'error': 'Prompt is required'}), 400
     
-    # Retrieve conversation history from session
     conversation_history = session.get('conversation_history', [])
-    
-    # Append the new prompt to the conversation history
     conversation_history.append({"role": "user", "message": prompt})
-    
-    # Create a single prompt from the conversation history
     full_prompt = "\n".join([f"{entry['role']}: {entry['message']}" for entry in conversation_history])
     
     model_id = 'amazon.titan-text-lite-v1'
     generated_text = invoke_model(model_id, full_prompt)
-    
-    # Append the model's response to the conversation history
     conversation_history.append({"role": "model", "message": generated_text})
-    
-    # Store the updated conversation history back in the session
     session['conversation_history'] = conversation_history
     
-    # Store the conversation in DynamoDB
-    conversation_id = session.get('conversation_id', str(uuid.uuid4()))
+    # Generate a numeric conversation_id
+    conversation_id = session.get('conversation_id', random.randint(1, 1000000))
     session['conversation_id'] = conversation_id
     store_conversation_in_dynamodb(conversation_id, conversation_history)
     
